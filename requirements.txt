@@ -6,7 +6,6 @@ oslo.db
 oslo.middleware
 zope.sqlalchemy
 mysql-python
-http://tarballs.openstack.org/neutron/neutron-master.tar.gz#egg=neutron
 aiclib
 gunicorn
 pymysql>=0.6.2
