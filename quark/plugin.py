@@ -22,6 +22,7 @@ from neutron.db import api as neutron_db_api
 from neutron.extensions import securitygroup as sg_ext
 from neutron import neutron_plugin_base_v2
 from neutron import quota
+from neutron.openstack.common import log as logging
 
 from quark.api import extensions
 from quark.db import models
@@ -33,6 +34,8 @@ from quark.plugin_modules import ports
 from quark.plugin_modules import routes
 from quark.plugin_modules import security_groups
 from quark.plugin_modules import subnets
+
+LOG = logging.getLogger(__name__)
 
 CONF = cfg.CONF
 
@@ -89,8 +92,18 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
                                    "networks_quark"]
 
     def __init__(self):
+        LOG.info("Starting quark plugin")
         neutron_db_api.configure_db()
         neutron_db_api.register_models(base=models.BASEV2)
+
+    def _fix_missing_tenant_id(self, context, resource):
+        """Will add the tenant_id to the context from body.
+
+        It is assumed that the body must have a tenant_id because neutron
+        core would have never got here in such a situation.
+        """
+        if context.tenant_id is None:
+            context.tenant_id = resource["tenant_id"]
 
     @sessioned
     def get_mac_address_range(self, context, id, fields=None):
@@ -102,6 +115,7 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     @sessioned
     def create_mac_address_range(self, context, mac_range):
+        self._fix_missing_tenant_id(context, mac_range["mac_range"])
         return mac_address_ranges.create_mac_address_range(context, mac_range)
 
     @sessioned
@@ -112,6 +126,7 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
     #XXX DO NOT DEPLOY!! XXX see redmine #2487
     @sessioned
     def create_security_group(self, context, security_group, net_driver):
+        self._fix_missing_tenant_id(context, security_group["security_group"])
         return security_groups.create_security_group(context, security_group,
                                                      net_driver)
 
@@ -120,6 +135,7 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
     @sessioned
     def create_security_group_rule(self, context, security_group_rule,
                                    net_driver):
+        self._fix_missing_tenant_id(context, security_group["security_group"])
         return security_groups.create_security_group_rule(context,
                                                           security_group_rule,
                                                           net_driver)
@@ -164,13 +180,15 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
     #XXX DO NOT DEPLOY!! XXX see redmine #2487
     @sessioned
     def update_security_group(self, context, id, security_group, net_driver):
+        self._fix_missing_tenant_id(context, security_group["security_group"])
         return security_groups.update_security_group(context, id,
                                                      security_group,
                                                      net_driver)
 
     @sessioned
     def create_ip_policy(self, context, ip_policy):
-        return ip_policies.create_ip_policy(context, ip_policy)
+        self._fix_missing_tenant_id(context, ip_policy)
+        return ip_policies.create_ip_policy(context, ip_policy["ip_policy"])
 
     @sessioned
     def get_ip_policy(self, context, id):
@@ -182,6 +200,7 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     @sessioned
     def update_ip_policy(self, context, id, ip_policy):
+        self._fix_missing_tenant_id(context, ip_policy["ip_policy"])
         return ip_policies.update_ip_policy(context, id, ip_policy)
 
     @sessioned
@@ -198,18 +217,22 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     @sessioned
     def create_ip_address(self, context, ip_address):
+        self._fix_missing_tenant_id(context, ip_address["ip_address"])
         return ip_addresses.create_ip_address(context, ip_address)
 
     @sessioned
     def update_ip_address(self, context, id, ip_address):
+        self._fix_missing_tenant_id(context, ip_address["ip_address"])
         return ip_addresses.update_ip_address(context, id, ip_address)
 
     @sessioned
     def create_port(self, context, port):
+        self._fix_missing_tenant_id(context, port["port"])
         return ports.create_port(context, port)
 
     @sessioned
     def post_update_port(self, context, id, port):
+        self._fix_missing_tenant_id(context, port["port"])
         return ports.post_update_port(context, id, port)
 
     @sessioned
@@ -218,7 +241,7 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     @sessioned
     def update_port(self, context, id, port):
-        return ports.update_port(context, id, port)
+        return ports.update_port(context, id, port["port"])
 
     @sessioned
     def get_ports(self, context, filters=None, fields=None):
@@ -250,6 +273,7 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     @sessioned
     def create_route(self, context, route):
+        self._fix_missing_tenant_id(context, route["route"])
         return routes.create_route(context, route)
 
     @sessioned
@@ -258,10 +282,12 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     @sessioned
     def create_subnet(self, context, subnet):
+        self._fix_missing_tenant_id(context, subnet["subnet"])
         return subnets.create_subnet(context, subnet)
 
     @sessioned
     def update_subnet(self, context, id, subnet):
+        self._fix_missing_tenant_id(context, subnet["subnet"])
         return subnets.update_subnet(context, id, subnet)
 
     @sessioned
@@ -286,10 +312,12 @@ class Plugin(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     @sessioned
     def create_network(self, context, network):
+        self._fix_missing_tenant_id(context, network["network"])
         return networks.create_network(context, network)
 
     @sessioned
     def update_network(self, context, id, network):
+        self._fix_missing_tenant_id(context, network["network"])
         return networks.update_network(context, id, network)
 
     @sessioned
