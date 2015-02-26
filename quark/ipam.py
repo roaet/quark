@@ -116,6 +116,9 @@ class QuarkIpam(object):
     def __init__(self):
         self.log_entry = self._create_ipam_log()
 
+    def _ipam_log_entry(self):
+        pass
+
     def _create_ipam_log(self):
         return {'status': 'N/A', 'successes': 0, 'failures': 0, 'timing': []}
 
@@ -321,6 +324,7 @@ class QuarkIpam(object):
         # we'll clean up multiple bad IPs if we find them (assuming something
         # is really wrong)
         for retry in xrange(CONF.QUARK.ip_address_retry_max):
+            self._ipam_log_entry()
             LOG.info("Attempt {0} of {1}".format(
                 retry + 1, CONF.QUARK.ip_address_retry_max))
             get_policy = models.IPPolicy.get_ip_policy_cidrs
@@ -594,6 +598,7 @@ class QuarkIpam(object):
 
         def _try_allocate_ip_address(ip_addr=None, sub=None):
             for retry in xrange(CONF.QUARK.ip_address_retry_max):
+                self._ipam_log_entry()
                 LOG.info("Allocating new IP attempt {0} of {1}".format(
                     retry + 1, CONF.QUARK.ip_address_retry_max))
                 if not sub:
