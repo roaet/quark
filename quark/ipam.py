@@ -113,6 +113,19 @@ def generate_v6(mac, port_id, cidr):
 
 
 class QuarkIpam(object):
+    def __init__(self):
+        self.log_entry = self._create_ipam_log()
+
+    def _create_ipam_log(self):
+        return {'status': 'N/A', 'successes': 0, 'failures': 0, 'timing': []}
+
+    def _update_ipam_log(self, success, timing):
+        self.log_entry['successes' if success else 'failures'] += 1
+        self.log_entry['timing'].append(timing)
+
+    def _output_ipam_log(self, status):
+        pass
+
     def _delete_mac_if_do_not_use(self, context, mac):
         # NOTE(mdietz): This is a HACK. Please see RM11043 for details
         admin_ctx = context.elevated()
@@ -247,6 +260,7 @@ class QuarkIpam(object):
         raise exceptions.MacAddressGenerationFailure(net_id=net_id)
 
     @synchronized(named("reallocate_ip"))
+#JLH
     def attempt_to_reallocate_ip(self, context, net_id, port_id, reuse_after,
                                  version=None, ip_address=None,
                                  segment_id=None, subnets=None, **kwargs):
@@ -554,6 +568,7 @@ class QuarkIpam(object):
                                                "ip_block.address.create",
                                                payload)
 
+#JLH
     def allocate_ip_address(self, context, new_addresses, net_id, port_id,
                             reuse_after, segment_id=None, version=None,
                             ip_addresses=None, subnets=None, **kwargs):
@@ -641,8 +656,10 @@ class QuarkIpam(object):
                      "{1}".format(port_id,
                                   [a["address_readable"]
                                    for a in new_addresses]))
+            self._output_ipam_log(True)
             return
 
+        self._output_ipam_log(False)
         raise exceptions.IpAddressGenerationFailure(net_id=net_id)
 
     def deallocate_ip_address(self, context, address):
