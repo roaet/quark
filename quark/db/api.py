@@ -16,7 +16,6 @@
 import datetime
 import inspect
 
-import json
 import netaddr
 from neutron.db.sqlalchemyutils import paginate_query
 from neutron.openstack.common import log as logging
@@ -491,15 +490,6 @@ def subnet_find_ordered_by_most_full(context, net_id, **filters):
     return query
 
 
-def subnet_update_set_alloc_pool_cache(context, subnet, cache_data=None):
-    if cache_data is not None:
-        cache_data = json.dumps(cache_data)
-    subnet["_allocation_pool_cache"] = cache_data
-    subnet = subnet_update(context, subnet)
-    LOG.debug("Setting alloc pool cache to %s" % cache_data)
-    return subnet
-
-
 @scoped
 def subnet_find(context, limit=None, page_reverse=False, sorts=None,
                 marker_obj=None, **filters):
@@ -513,6 +503,7 @@ def subnet_find(context, limit=None, page_reverse=False, sorts=None,
 
     if "join_routes" in filters:
         query = query.options(orm.joinedload(models.Subnet.routes))
+
     return paginate_query(query.filter(*model_filters), models.Subnet, limit,
                           sorts, marker_obj)
 
