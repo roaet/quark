@@ -116,7 +116,8 @@ class XapiClient(object):
             LOG.exception("Failed to create a XAPI session")
             raise
         finally:
-            session.xenapi.session.logout()
+            if session is not None:
+                session.xenapi.session.logout()
 
     def get_instances(self, session):
         """Returns a dict of `VM OpaqueRef` (str) -> `xapi.VM`."""
