@@ -274,7 +274,7 @@ def get_ports_for_ip_address(context, ip_id, limit=None, sorts=None,
     if filters is None:
         filters = {}
 
-    filters['ip_address'] = ip_id
+    filters['ip_address_id'] = ip_id
 
     ports = db_api.port_find(context, limit, sorts, marker,
                              fields=fields, join_security_groups=True,
