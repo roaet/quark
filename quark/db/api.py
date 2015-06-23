@@ -128,6 +128,9 @@ def _model_query(context, model, filters, fields=None):
     if filters.get("cidr"):
         model_filters.append(model.cidr == filters["cidr"])
 
+    if filters.get("service"):
+        model_filters.append(model.ip_version == filters["service"])
+
     # Inject the tenant id if none is set. We don't need unqualified queries.
     # This works even when a non-shared, other-tenant owned network is passed
     # in because the authZ checks that happen in Neutron above us yank it back
@@ -290,6 +293,10 @@ def ip_address_create(context, **address_dict):
     ip_address["allocated_at"] = timeutils.utcnow()
     context.session.add(ip_address)
     return ip_address
+
+
+def ip_address_delete(context, addr):
+    context.session.delete(addr)
 
 
 @scoped
