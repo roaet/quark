@@ -117,9 +117,13 @@ def _model_query(context, model, filters, fields=None):
     if filters.get("ip_version"):
         model_filters.append(model.ip_version == filters["ip_version"])
 
-    if filters.get("ip_address"):
+    if filters.get("ip_address") and model == models.IPAddress:
         model_filters.append(model.address.in_(
-            [ip.ipv6().value for ip in filters["ip_address"]]))
+            [netaddr.IPAddress(ip).ipv6().value for ip in
+             filters["ip_address"]]))
+
+    if filters.get("type") and model == models.IPAddress:
+        model_filters.append(model.address_type == filters["type"])
 
     if filters.get("mac_address_range_id"):
         model_filters.append(model.mac_address_range_id ==
@@ -129,7 +133,7 @@ def _model_query(context, model, filters, fields=None):
         model_filters.append(model.cidr == filters["cidr"])
 
     if filters.get("service"):
-        model_filters.append(model.ip_version == filters["service"])
+        model_filters.append(model.service == filters["service"])
 
     # Inject the tenant id if none is set. We don't need unqualified queries.
     # This works even when a non-shared, other-tenant owned network is passed
