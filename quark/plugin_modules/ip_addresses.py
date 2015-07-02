@@ -135,8 +135,8 @@ def create_ip_address(context, body):
                     ports.append(port)
 
         if not ports:
-            raise exceptions.PortNotFound(port_id=port_ids,
-                                          net_id=network_id)
+            raise quark_exceptions.PortOrDeviceNotFound(port_id=port_ids,
+                                                        net_id=network_id)
 
     validate_ports_on_network_and_same_segment(ports, network_id)
 
@@ -277,7 +277,7 @@ def get_ports_for_ip_address(context, ip_id, limit=None, sorts=None,
     if filters is None:
         filters = {}
 
-    filters['ip_address'] = ip_id
+    filters['ip_address_id'] = [ip_id]
 
     ports = db_api.port_find(context, limit, sorts, marker,
                              fields=fields, join_security_groups=True,
@@ -301,7 +301,7 @@ def get_port_for_ip_address(context, ip_id, id, fields=None):
     if not addr:
         raise quark_exceptions.IpAddressNotFound(addr_id=ip_id)
 
-    filters = {'ip_address': ip_id}
+    filters = {'ip_address_id': [ip_id]}
     results = db_api.port_find(context, id=id, fields=fields,
                                scope=db_api.ONE, **filters)
 

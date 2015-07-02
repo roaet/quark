@@ -21,6 +21,7 @@ import netaddr
 from neutron.openstack.common import log as logging
 from oslo.config import cfg
 
+from quark.db import ip_types
 from quark.db import models
 from quark import network_strategy
 from quark import protocols
@@ -232,10 +233,16 @@ def _make_port_for_ip_dict(port, fields=None):
     return res
 
 
+def _ip_is_fixed(port, ip):
+    at = ip.get('address_type')
+    return (not at or at == ip_types.FIXED or (at == ip_types.SHARED and
+                                               port.service != "none"))
+
+
 def _make_port_dict(port, fields=None):
     res = _port_dict(port)
     res["fixed_ips"] = [_make_port_address_dict(ip, port, fields)
-                        for ip in port.ip_addresses]
+                        for ip in port.ip_addresses if _ip_is_fixed(port, ip)]
     return res
 
 
@@ -251,8 +258,9 @@ def _make_ports_list(query, fields=None):
     ports = []
     for port in query:
         port_dict = _port_dict(port, fields)
-        port_dict["fixed_ips"] = [_make_port_address_dict(addr, port, fields)
-                                  for addr in port.ip_addresses]
+        port_dict["fixed_ips"] = [_make_port_address_dict(ip, port, fields)
+                                  for ip in port.ip_addresses if
+                                  _ip_is_fixed(port, ip)]
         ports.append(port_dict)
     return ports
 
