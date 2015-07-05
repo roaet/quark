@@ -25,6 +25,7 @@ from oslo.utils import timeutils
 from sqlalchemy import event
 from sqlalchemy import func as sql_func
 from sqlalchemy import and_, asc, desc, orm, or_, not_
+from sqlalchemy.orm import class_mapper
 
 from quark.db import models
 from quark import network_strategy
@@ -68,9 +69,20 @@ def _listify(filters):
             filters[key] = listified
 
 
+def _model_attrs(model):
+    model_map = class_mapper(model)
+    model_attrs = [x.key for x in model_map.column_attrs]
+    if "_cidr" in model_attrs:
+        model_attrs.append("cidr")
+    if "_deallocated" in model_attrs:
+        model_attrs.append("deallocated")
+    return model_attrs
+
+
 def _model_query(context, model, filters, fields=None):
     filters = filters or {}
     model_filters = []
+    model_attrs = _model_attrs(model)
 
     if filters.get("name"):
         model_filters.append(model.name.in_(filters["name"]))
@@ -132,7 +144,7 @@ def _model_query(context, model, filters, fields=None):
     if filters.get("cidr"):
         model_filters.append(model.cidr == filters["cidr"])
 
-    if filters.get("service"):
+    if "service" in model_attrs and filters.get("service"):
         model_filters.append(model.service == filters["service"])
 
     # Inject the tenant id if none is set. We don't need unqualified queries.
