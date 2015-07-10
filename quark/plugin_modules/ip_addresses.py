@@ -135,8 +135,8 @@ def create_ip_address(context, body):
                     ports.append(port)
 
         if not ports:
-            raise exceptions.PortNotFound(port_id=port_ids,
-                                          net_id=network_id)
+            raise quark_exceptions.PortOrDeviceNotFound(port_id=port_ids,
+                                                        net_id=network_id)
 
     validate_ports_on_network_and_same_segment(ports, network_id)
 

@@ -137,3 +137,7 @@ class RedisSlaveWritesForbidden(exceptions.NeutronException):
 class NoBackendConnectionsDefined(exceptions.NeutronException):
     message = _("This driver cannot be used without a backend connection "
                 "definition. %(msg)")
+
+
+class PortOrDeviceNotFound(exceptions.PortNotFound):
+    message = _("Suitable port or device could not be found")
