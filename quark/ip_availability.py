@@ -22,8 +22,8 @@ import netaddr
 from neutron.common import config
 from neutron.db import api as neutron_db_api
 from neutron.openstack.common import log as logging
-from oslo.config import cfg
-from oslo.utils import timeutils
+from oslo_config import cfg
+from oslo_utils import timeutils
 from sqlalchemy import and_, or_, func
 
 from quark.db import models

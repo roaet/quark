@@ -18,7 +18,7 @@ from neutron.extensions import securitygroup as sg_ext
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import uuidutils
 from neutron import quota
-from oslo.config import cfg
+from oslo_config import cfg
 
 from quark.db import api as db_api
 from quark import plugin_views as v

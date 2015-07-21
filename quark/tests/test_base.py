@@ -17,7 +17,7 @@ import os
 
 from neutron import context
 from neutron.tests.base import BaseTestCase
-from oslo.config import cfg
+from oslo_config import cfg
 import unittest2
 
 

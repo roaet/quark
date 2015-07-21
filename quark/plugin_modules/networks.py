@@ -20,8 +20,8 @@ from neutron.extensions import providernet as pnet
 from neutron.openstack.common import log as logging
 from neutron.openstack.common import uuidutils
 from neutron import quota
-from oslo.config import cfg
-from oslo.utils import importutils
+from oslo_config import cfg
+from oslo_utils import importutils
 
 from quark.db import api as db_api
 from quark.drivers import registry

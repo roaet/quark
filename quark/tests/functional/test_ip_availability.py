@@ -3,7 +3,7 @@ import datetime
 import mock
 import netaddr
 from neutron.db import api as neutron_db_api
-from oslo.config import cfg
+from oslo_config import cfg
 
 from quark.db import models
 from quark import ip_availability as ip_avail

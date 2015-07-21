@@ -12,12 +12,13 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+import datetime
 
 import netaddr
 import neutron.db.model_base
 from neutron.db import models_v2 as models
 from neutron.openstack.common import log as logging
-from oslo.utils import timeutils
+from oslo_utils import timeutils
 import sqlalchemy as sa
 from sqlalchemy.ext import associationproxy
 from sqlalchemy.ext import declarative
@@ -54,7 +55,7 @@ def _default_list_getset(collection_class, proxy):
 
 
 class QuarkBase(neutron.db.model_base.NeutronBaseV2):
-    created_at = sa.Column(sa.DateTime(), default=timeutils.utcnow)
+    created_at = sa.Column(sa.DateTime(), default=datetime.datetime.now)
     __table_args__ = TABLE_KWARGS
 
 

@@ -19,8 +19,8 @@ import mock
 import netaddr
 from neutron.common import exceptions
 from neutron.common import rpc
-from oslo.config import cfg
 from oslo.db import exception as db_exc
+from oslo_config import cfg
 
 from quark.db import models
 from quark import exceptions as q_exc
@@ -1735,7 +1735,7 @@ class QuarkIPAddressAllocationNotifications(QuarkIpamBaseTest):
             mock.patch("quark.db.api.ip_address_create"),
             mock.patch("quark.db.api.subnet_find_ordered_by_most_full"),
             mock.patch("neutron.common.rpc.get_notifier"),
-            mock.patch("oslo.utils.timeutils.utcnow"),
+            mock.patch("oslo_utils.timeutils.utcnow"),
         ) as (addr_find, addr_create, subnet_find, notify, time):
             addrs_found = []
             for a in addresses:

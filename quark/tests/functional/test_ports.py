@@ -15,6 +15,7 @@
 
 import mock
 import netaddr
+import time
 
 import contextlib
 
@@ -38,7 +39,9 @@ class QuarkFindPortsSorted(BaseFunctionalTest):
         net_mod = db_api.network_create(self.context, **network)
         # create ports
         port1 = dict(network_id=net_mod["id"], backend_key="1", device_id="1")
+        time.sleep(0.1)
         port2 = dict(network_id=net_mod["id"], backend_key="1", device_id="1")
+        time.sleep(0.1)
         port3 = dict(network_id=net_mod["id"], backend_key="1", device_id="1")
         port_mod1 = db_api.port_create(self.context, **port1)
         port_mod2 = db_api.port_create(self.context, **port2)

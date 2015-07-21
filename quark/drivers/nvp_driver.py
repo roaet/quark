@@ -23,7 +23,7 @@ import random
 import aiclib
 from neutron.extensions import securitygroup as sg_ext
 from neutron.openstack.common import log as logging
-from oslo.config import cfg
+from oslo_config import cfg
 
 from quark.drivers import base
 from quark import exceptions

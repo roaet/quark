@@ -19,7 +19,7 @@ import string
 
 import netaddr
 from neutron.openstack.common import log as logging
-from oslo.config import cfg
+from oslo_config import cfg
 import redis
 import redis.sentinel
 

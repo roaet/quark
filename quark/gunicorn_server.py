@@ -8,7 +8,7 @@ from neutron.common import legacy
 from neutron.common import utils
 from neutron.openstack.common import log as logging
 from neutron import service  # noqa  For api_workers config value
-from oslo.config import cfg
+from oslo_config import cfg
 
 
 options = [
