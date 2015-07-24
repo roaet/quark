@@ -235,8 +235,7 @@ def _make_port_for_ip_dict(port, fields=None):
 
 def _ip_is_fixed(port, ip):
     at = ip.get('address_type')
-    return (not at or at == ip_types.FIXED or (at == ip_types.SHARED and
-                                               port.service != "none"))
+    return (not at or at == ip_types.FIXED or (at == ip_types.SHARED))
 
 
 def _make_port_dict(port, fields=None):
