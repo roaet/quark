@@ -150,6 +150,8 @@ def _model_query(context, model, filters, fields=None):
         elif key == "tenant_id":
             if model == models.IPAddress:
                 model_filters.append(model.used_by_tenant_id.in_(value))
+            elif model == models.PortIpAssociation:
+                pass
             else:
                 model_filters.append(model.tenant_id.in_(value))
 
@@ -233,6 +235,14 @@ def port_create(context, **port_dict):
     return port
 
 
+def ip_port_association_find(context, **filters):
+    query = context.session.query(models.PortIpAssociation)
+
+    model_filters = _model_query(context, models.PortIpAssociation, filters)
+
+    return query.filter(*model_filters)
+
+
 def port_disassociate_ip(context, ports, address):
     assocs_to_remove = [assoc for assoc in address.associations
                         if assoc.port in ports]
@@ -247,11 +257,10 @@ def port_disassociate_ip(context, ports, address):
 def port_associate_ip(context, ports, address, enable_port=None):
     for port in ports:
         assoc = models.PortIpAssociation()
-        assoc.port_id = port.id
-        assoc.ip_address_id = address.id
+        assoc.port = port
+        assoc.ip_address = address
         assoc.enabled = port.id in enable_port if enable_port else False
-        address.associations.append(assoc)
-    context.session.add(address)
+        context.session.add(assoc)
     return address
 
 

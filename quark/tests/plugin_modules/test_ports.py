@@ -637,6 +637,7 @@ class TestQuarkCreatePortsSameDevBadRequest(test_quark_plugin.TestQuarkPlugin):
         with self._stubs(port=port["port"], network=network, addr=ip,
                          mac=mac, subnet=subnet) as port_create:
             result = self.plugin.create_port(self.context, port)
+            print result
             self.assertTrue(port_create.called)
             for key in expected.keys():
                 self.assertEqual(result[key], expected[key])
