@@ -125,6 +125,8 @@ port_ip_association_table = sa.Table(
               primary_key=True),
     sa.Column("enabled", sa.Boolean(), default=True, nullable=False,
               server_default='1'),
+    sa.Column("service", sa.String(255), default='none', nullable=True,
+              server_default='none'),
     **TABLE_KWARGS)
 
 
@@ -161,6 +163,31 @@ class IPAddress(BASEV2, models.HasId):
                                      ip_types.SHARED,
                              name="quark_ip_address_types"))
     associations = orm.relationship(PortIpAssociation, backref="ip_address")
+
+    def is_shared(self):
+        return self.address_type == ip_types.SHARED
+
+    def has_shared_owner(self):
+        for assoc in self["associations"]:
+            if assoc.service != 'none' and assoc.service is not None:
+                return True
+        return False
+
+    def get_shared_owner(self):
+        for assoc in self["associations"]:
+            if assoc.service != 'none' and assoc.service is not None:
+                return assoc.port
+        return None
+
+    def set_service_for_port(self, port, service):
+        for assoc in self["associations"]:
+            if assoc.port_id == port["id"]:
+                assoc.service = service
+
+    def get_service_for_port(self, port):
+        for assoc in self["associations"]:
+            if assoc.port_id == port["id"]:
+                return assoc.service
 
     def enabled_for_port(self, port):
         for assoc in self["associations"]:
@@ -327,7 +354,6 @@ class Port(BASEV2, models.HasTenant, models.HasId):
     device_owner = sa.Column(sa.String(255))
     bridge = sa.Column(sa.String(255))
     associations = orm.relationship(PortIpAssociation, backref="port")
-    service = sa.Column(sa.String(255), default="none")
 
     @declarative.declared_attr
     def ip_addresses(cls):
@@ -337,7 +363,7 @@ class Port(BASEV2, models.HasTenant, models.HasId):
         return orm.relationship(IPAddress, primaryjoin=primaryjoin,
                                 secondaryjoin=secondaryjoin,
                                 secondary=port_ip_association_table,
-                                backref="ports",
+                                backref='ports',
                                 order_by='IPAddress.allocated_at')
 
     @declarative.declared_attr
