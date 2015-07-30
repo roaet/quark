@@ -15,6 +15,7 @@
 
 from neutron.common import exceptions
 from neutron.openstack.common import log as logging
+from neutron import quota
 from oslo.config import cfg
 import webob
 
@@ -26,6 +27,14 @@ from quark import plugin_views as v
 
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
+
+quark_ip_addr_opts = [
+    cfg.BoolOpt('ipaddr_allow_fixed_ip',
+                default=False,
+                help=_('Controls if /ip_addresses can make fixed IPs or not'))
+]
+
+CONF.register_opts(quark_ip_addr_opts, "QUARK")
 
 # NOTE(thomasem): Since IP addresses are only at the subnet level, use
 # the QuarkIpamANY strategy, due to other IPAM strategies only being
@@ -69,6 +78,13 @@ def validate_and_fetch_segment(ports, network_id):
     return segment_id
 
 
+def validate_port_ip_quotas(context, ports):
+    for port in ports:
+        addresses = port.get("ip_addresses", [])
+        quota.QUOTAS.limit_check(context, context.tenant_id,
+                                 fixed_ips_per_port=len(addresses) + 1)
+
+
 def _shared_ip_request(ip_address):
     port_ids = ip_address.get('ip_address', {}).get('port_ids', [])
     device_ids = ip_address.get('ip_address', {}).get('device_ids', [])
@@ -90,6 +106,10 @@ def create_ip_address(context, body):
     LOG.info("create_ip_address for tenant %s" % context.tenant_id)
     iptype = (ip_types.SHARED if _shared_ip_request(body)
               else ip_types.FIXED)
+    if iptype == ip_types.FIXED and not CONF.QUARK.ipaddr_allow_fixed_ip:
+        raise exceptions.BadRequest(resource="ip_addresses",
+                                    msg="Only shared IPs may be made with "
+                                        "this resource.")
     ip_dict = body.get("ip_address")
     port_ids = ip_dict.get('port_ids', [])
     network_id = ip_dict.get('network_id')
@@ -139,6 +159,7 @@ def create_ip_address(context, body):
                                                         net_id=network_id)
 
     segment_id = validate_and_fetch_segment(ports, network_id)
+    validate_port_ip_quotas(context, ports)
 
     # Shared Ips are only new IPs. Two use cases: if we got device_id
     # or if we got port_ids. We should check the case where we got port_ids
@@ -175,6 +196,7 @@ def _raise_if_shared_and_enabled(address_request, address_model):
 
 
 def update_ip_address(context, id, ip_address):
+    """Due to NCP-1592 ensure that address_type cannot change after update."""
     LOG.info("update_ip_address %s for tenant %s" % (id, context.tenant_id))
     ports = []
     with context.session.begin():
@@ -196,6 +218,12 @@ def update_ip_address(context, id, ip_address):
         port_ids = ip_address['ip_address'].get('port_ids')
 
         if port_ids:
+            ip_type = address.address_type
+            if ip_type == ip_types.FIXED and len(port_ids) > 1:
+                raise exceptions.BadRequest(
+                    resource="ip_addresses",
+                    msg="Fixed ips cannot be updated with more than one port.")
+
             _raise_if_shared_and_enabled(ip_address, address)
             ports = db_api.port_find(context, tenant_id=context.tenant_id,
                                      id=port_ids, scope=db_api.ALL)
@@ -206,6 +234,7 @@ def update_ip_address(context, id, ip_address):
                     message="No ports not found with ids=%s" % port_ids)
 
             validate_and_fetch_segment(ports, address["network_id"])
+            validate_port_ip_quotas(context, ports)
 
             LOG.info("Updating IP address, %s, to only be used by the"
                      "following ports:  %s" % (address.address_readable,
