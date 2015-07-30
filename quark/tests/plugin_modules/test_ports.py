@@ -503,6 +503,26 @@ class TestQuarkPortCreateQuota(test_quark_plugin.TestQuarkPlugin):
                 self.plugin.create_port(self.context, port)
 
 
+class TestQuarkPortCreateFixedIpsQuota(test_quark_plugin.TestQuarkPlugin):
+    @contextlib.contextmanager
+    def _stubs(self, network):
+        network["network_plugin"] = "BASE"
+        network["ipam_strategy"] = "ANY"
+        with mock.patch("quark.db.api.network_find") as net_find:
+            net_find.return_value = network
+            yield
+
+    def test_create_port_fixed_ips_over_quota(self):
+        network = {"id": 1, "tenant_id": self.context.tenant_id}
+        fixed_ips = [{"subnet_id": 1}, {"subnet_id": 1}, {"subnet_id": 1},
+                     {"subnet_id": 1}, {"subnet_id": 1}, {"subnet_id": 1}]
+        port = {"port": {"network_id": 1, "tenant_id": self.context.tenant_id,
+                         "device_id": 2, "fixed_ips": fixed_ips}}
+        with self._stubs(network=network):
+            with self.assertRaises(exceptions.OverQuota):
+                self.plugin.create_port(self.context, port)
+
+
 class TestQuarkUpdatePort(test_quark_plugin.TestQuarkPlugin):
     @contextlib.contextmanager
     def _stubs(self, port, new_ips=None, parent_net=False):
@@ -519,8 +539,7 @@ class TestQuarkUpdatePort(test_quark_plugin.TestQuarkPlugin):
             mock.patch("quark.db.api.port_update"),
             mock.patch("quark.ipam.QuarkIpam.allocate_ip_address"),
             mock.patch("quark.ipam.QuarkIpam.deallocate_ips_by_port"),
-            mock.patch("neutron.quota.QuotaEngine.limit_check"),
-        ) as (port_find, port_update, alloc_ip, dealloc_ip, limit_check):
+        ) as (port_find, port_update, alloc_ip, dealloc_ip):
             port_find.return_value = port_model
             port_update.return_value = port_model
             if new_ips:
@@ -602,6 +621,20 @@ class TestQuarkUpdatePort(test_quark_plugin.TestQuarkPlugin):
                                 ip_address=new_addr["address_readable"])]))
             self.plugin.update_port(self.context, 1, new_port)
             self.assertEqual(alloc_ip.call_count, 1)
+
+    def test_update_port_goes_over_quota(self):
+        fixed_ips = {"fixed_ips": [{"subnet_id": 1},
+                                   {"subnet_id": 1},
+                                   {"subnet_id": 1},
+                                   {"subnet_id": 1},
+                                   {"subnet_id": 1},
+                                   {"subnet_id": 1}]}
+        with self._stubs(
+            port=dict(id=1, name="myport", mac_address="0:0:0:0:0:1")
+        ) as (port_find, port_update, alloc_ip, dealloc_ip):
+            new_port = {"port": fixed_ips}
+            with self.assertRaises(exceptions.OverQuota):
+                self.plugin.update_port(self.context, 1, new_port)
 
 
 class TestQuarkUpdatePortSecurityGroups(test_quark_plugin.TestQuarkPlugin):
