@@ -141,3 +141,15 @@ class NoBackendConnectionsDefined(exceptions.NeutronException):
 
 class PortOrDeviceNotFound(exceptions.PortNotFound):
     message = _("Suitable port or device could not be found")
+
+
+class NotAllPortOrDeviceFound(exceptions.NotFound):
+    message = _("Not all ports or devices from request could be found")
+
+
+class CannotAddMoreIPsToPort(exceptions.OverQuota):
+    message = _("Cannot add more IPs to port")
+
+
+class CannotCreateMoreSharedIPs(exceptions.OverQuota):
+    message = _("Cannot create more shared IPs on selected network")

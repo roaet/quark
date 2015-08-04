@@ -282,8 +282,15 @@ def port_associate_ip(context, ports, address, enable_port=None):
     return address
 
 
+def get_ports_for_address(address):
+    ports = []
+    for assoc in address.associations:
+        ports.append(assoc.port)
+    return ports
+
+
 def update_port_associations_for_ip(context, ports, address):
-    assoc_ports = set(address.ports)
+    assoc_ports = set(get_ports_for_address(address))
     new_ports = set(ports)
     new_address = port_associate_ip(context, new_ports - assoc_ports,
                                     address)

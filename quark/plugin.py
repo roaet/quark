@@ -56,7 +56,7 @@ quark_resources = [
     quota.BaseResource('v6_subnets_per_network',
                        'quota_v6_subnets_per_network'),
     quota.BaseResource('fixed_ips_per_port',
-                       'quota_fixed_ips_per_port')
+                       'quota_fixed_ips_per_port'),
 ]
 
 quark_quota_opts = [
@@ -85,8 +85,8 @@ quark_quota_opts = [
                default=1,
                help=_('Maximum v6 subnets per network')),
     cfg.IntOpt('quota_fixed_ips_per_port',
-               default=5,
-               help=_('Maximum number of fixed IPs per port'))
+               default=6,
+               help=_('Maximum number of fixed IPs per port')),
 ]
 
 

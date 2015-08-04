@@ -15,7 +15,6 @@
 
 from neutron.common import exceptions
 from neutron.openstack.common import log as logging
-from neutron import quota
 from oslo.config import cfg
 import webob
 
@@ -28,10 +27,29 @@ from quark import plugin_views as v
 CONF = cfg.CONF
 LOG = logging.getLogger(__name__)
 
+# NOTE(roaet): this number includes the assumed 'given ips' and any additional
+total_ips_on_port = {'00000000-0000-0000-0000-000000000000': 6,
+                     '11111111-1111-1111-1111-111111111111': 1,
+                     '*': 5}
+
+# NOTE(roaet): shared ips are treated like any other IP and will consume
+# from total_ips_on_port
+shared_ip_on_network = {'00000000-0000-0000-0000-000000000000': 5,
+                        '11111111-1111-1111-1111-111111111111': 0,
+                        '*': -1}
+
 quark_ip_addr_opts = [
     cfg.BoolOpt('ipaddr_allow_fixed_ip',
                 default=False,
-                help=_('Controls if /ip_addresses can make fixed IPs or not'))
+                help=_('Controls if /ip_addresses can make fixed IPs or not')),
+    cfg.DictOpt('total_ips_allowed_on_port',
+                default=total_ips_on_port,
+                help=_('Defines how many IPs may be on a port by network in '
+                       'key:quantity format')),
+    cfg.DictOpt('shared_ips_allowed_on_network',
+                default=shared_ip_on_network,
+                help=_('Defines how many shared IPs may be made on a network '
+                       'in key:quantity format'))
 ]
 
 CONF.register_opts(quark_ip_addr_opts, "QUARK")
@@ -40,6 +58,14 @@ CONF.register_opts(quark_ip_addr_opts, "QUARK")
 # the QuarkIpamANY strategy, due to other IPAM strategies only being
 # relevant at the network level (port create).
 ipam_driver = ipam.IPAM_REGISTRY.get_strategy(ipam.QuarkIpamANY.get_name())
+
+
+def _can_add_ip_to_port_on_network(context, network_id, db_port):
+    return True
+
+
+def _can_create_shared_ip_on_network(context, network_id):
+    return True
 
 
 def get_ip_addresses(context, **filters):
@@ -78,11 +104,25 @@ def validate_and_fetch_segment(ports, network_id):
     return segment_id
 
 
-def validate_port_ip_quotas(context, ports):
+def validate_port_ip_quotas(context, network, ports):
+    if network not in CONF.QUARK.total_ips_allowed_on_port:
+        network = '*'
+    limit = CONF.QUARK.total_ips_allowed_on_port.get(network)
+    if limit < 0:
+        return
     for port in ports:
-        addresses = port.get("ip_addresses", [])
-        quota.QUOTAS.limit_check(context, context.tenant_id,
-                                 fixed_ips_per_port=len(addresses) + 1)
+        if len(port.associations) + 1 > limit:
+            raise quark_exceptions.CannotAddMoreIPsToPort()
+
+
+def validate_shared_ips_quotas(context, network, addresses):
+    if network not in CONF.QUARK.shared_ips_allowed_on_network:
+        network = '*'
+    limit = CONF.QUARK.shared_ips_allowed_on_network.get(network)
+    if limit < 0:
+        return
+    if len(addresses) + 1 > limit:
+        raise quark_exceptions.CannotCreateMoreSharedIPs()
 
 
 def _shared_ip_request(ip_address):
@@ -137,8 +177,10 @@ def create_ip_address(context, body):
 
     new_addresses = []
     ports = []
+    by_device = False
     with context.session.begin():
         if network_id and device_ids:
+            by_device = True
             for device_id in device_ids:
                 port = db_api.port_find(
                     context, network_id=network_id, device_id=device_id,
@@ -158,8 +200,19 @@ def create_ip_address(context, body):
             raise quark_exceptions.PortOrDeviceNotFound(port_id=port_ids,
                                                         net_id=network_id)
 
+    if ((by_device and len(device_ids) != len(ports)) or
+            (not by_device and len(port_ids) != len(ports))):
+        raise quark_exceptions.NotAllPortOrDeviceFound()
+
     segment_id = validate_and_fetch_segment(ports, network_id)
-    validate_port_ip_quotas(context, ports)
+    if iptype == ip_types.SHARED:
+        old_addresses = db_api.ip_address_find(context,
+                                               tenant_id=context.tenant_id,
+                                               network_id=network_id,
+                                               address_type=ip_types.SHARED,
+                                               scope=db_api.ALL)
+        validate_shared_ips_quotas(context, network_id, old_addresses)
+    validate_port_ip_quotas(context, network_id, ports)
 
     # Shared Ips are only new IPs. Two use cases: if we got device_id
     # or if we got port_ids. We should check the case where we got port_ids
@@ -205,6 +258,11 @@ def update_ip_address(context, id, ip_address):
         if not address:
             raise exceptions.NotFound(
                 message="No IP address found with id=%s" % id)
+        iptype = address.address_type
+        if iptype == ip_types.FIXED and not CONF.QUARK.ipaddr_allow_fixed_ip:
+            raise exceptions.BadRequest(
+                resource="ip_addresses",
+                msg="Fixed ips cannot be updated using this interface.")
 
         reset = ip_address['ip_address'].get('reset_allocation_time', False)
         if reset and address['deallocated'] == 1:
@@ -216,10 +274,11 @@ def update_ip_address(context, id, ip_address):
                 raise webob.exc.HTTPForbidden(detail=msg)
 
         port_ids = ip_address['ip_address'].get('port_ids')
+        if iptype == ip_types.SHARED:
+            has_owner = address.has_any_shared_owner()
 
         if port_ids:
-            ip_type = address.address_type
-            if ip_type == ip_types.FIXED and len(port_ids) > 1:
+            if iptype == ip_types.FIXED and len(port_ids) > 1:
                 raise exceptions.BadRequest(
                     resource="ip_addresses",
                     msg="Fixed ips cannot be updated with more than one port.")
@@ -234,7 +293,13 @@ def update_ip_address(context, id, ip_address):
                     message="No ports not found with ids=%s" % port_ids)
 
             validate_and_fetch_segment(ports, address["network_id"])
-            validate_port_ip_quotas(context, ports)
+            validate_port_ip_quotas(context, address.network_id, ports)
+
+            if iptype == ip_types.SHARED and has_owner:
+                for assoc in address.associations:
+                    pid = assoc.port_id
+                    if pid not in port_ids and 'none' != assoc.service:
+                        raise quark_exceptions.PortRequiresDisassociation()
 
             LOG.info("Updating IP address, %s, to only be used by the"
                      "following ports:  %s" % (address.address_readable,
@@ -242,10 +307,10 @@ def update_ip_address(context, id, ip_address):
             new_address = db_api.update_port_associations_for_ip(context,
                                                                  ports,
                                                                  address)
+        elif iptype == ip_types.SHARED and has_owner:
+            raise quark_exceptions.PortRequiresDisassociation()
         else:
-            if port_ids is not None:
-                ipam_driver.deallocate_ip_address(
-                    context, address)
+            ipam_driver.deallocate_ip_address(context, address)
             return v._make_ip_dict(address)
     return v._make_ip_dict(new_address)
 
@@ -257,14 +322,13 @@ def delete_ip_address(context, id):
     : param id: UUID representing the ip address to delete.
     """
     LOG.info("delete_ip_address %s for tenant %s" % (id, context.tenant_id))
-
     with context.session.begin():
         ip_address = db_api.ip_address_find(
             context, id=id, tenant_id=context.tenant_id, scope=db_api.ONE)
         if not ip_address or ip_address.deallocated:
             raise quark_exceptions.IpAddressNotFound(addr_id=id)
 
-        if _shared_ip_and_active(ip_address):
+        if ip_address.has_any_shared_owner():
             raise quark_exceptions.PortRequiresDisassociation()
 
         db_api.update_port_associations_for_ip(context, [], ip_address)
