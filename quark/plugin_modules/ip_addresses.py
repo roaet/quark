@@ -413,18 +413,20 @@ def update_port_for_ip_address(context, ip_id, id, port):
     """
     LOG.info("update_port %s for tenant %s" % (id, context.tenant_id))
     sanitize_list = ['service']
-    addr = db_api.ip_address_find(context, id=ip_id, scope=db_api.ONE)
-    if not addr:
-        raise quark_exceptions.IpAddressNotFound(addr_id=ip_id)
-    port_db = db_api.port_find(context, id=id, scope=db_api.ONE)
-    if not port_db:
-        raise quark_exceptions.PortNotFound(port_id=id)
-    port_dict = {k: port['port'][k] for k in sanitize_list}
+    with context.session.begin():
+        addr = db_api.ip_address_find(context, id=ip_id, scope=db_api.ONE)
+        if not addr:
+            raise quark_exceptions.IpAddressNotFound(addr_id=ip_id)
+        port_db = db_api.port_find(context, id=id, scope=db_api.ONE)
+        if not port_db:
+            raise quark_exceptions.PortNotFound(port_id=id)
+        port_dict = {k: port['port'][k] for k in sanitize_list}
 
-    require_da = False
-    service = port_dict.get('service')
+        require_da = False
+        service = port_dict.get('service')
 
-    if require_da and _shared_ip_and_active(addr, except_port=id):
-        raise quark_exceptions.PortRequiresDisassociation()
-    addr.set_service_for_port(port_db, service)
+        if require_da and _shared_ip_and_active(addr, except_port=id):
+            raise quark_exceptions.PortRequiresDisassociation()
+        addr.set_service_for_port(port_db, service)
+        context.session.add(addr)
     return v._make_port_for_ip_dict(addr, port_db)
