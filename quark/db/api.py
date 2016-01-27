@@ -475,7 +475,7 @@ def mac_address_range_find_allocation_counts(context, address=None,
                                              use_forbidden_mac_range=False):
     count = sql_func.count(models.MacAddress.address)
     query = context.session.query(models.MacAddressRange,
-                                  count.label("count")).with_lockmode("update")
+                                  count.label("count"))
     query = query.outerjoin(models.MacAddress)
     query = query.group_by(models.MacAddressRange.id)
     query = query.order_by(desc(count))
