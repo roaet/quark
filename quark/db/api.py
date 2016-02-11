@@ -468,6 +468,16 @@ def mac_address_reallocate_find(context, transaction_id):
     return mac
 
 
+def mac_address_reallocatable_in_range_find(context, mac_range, reuse_after):
+    ma = models.MacAddress
+    query = context.session.query(ma)
+    query = query.filter(ma.mac_address_range_id == mac_range["id"])
+    reuse = (timeutils.utcnow() - datetime.timedelta(seconds=reuse_after))
+    query = query.filter(ma.deallocated_at <= reuse)
+    query = query.filter(ma.deallocated == True)  # noqa
+    return query.all()
+
+
 def mac_address_range_find_allocation_counts(context, address=None,
                                              use_forbidden_mac_range=False):
     count = sql_func.count(models.MacAddress.address)
@@ -510,6 +520,19 @@ def mac_address_range_update(context, mac_range, **kwargs):
     return mac_range
 
 
+def mac_range_find_start_of_next_gap(context, mac_range):
+    ma = models.MacAddress
+    query = context.session.query(ma)
+    query = query.filter(ma.mac_address_range_id == mac_range["id"])
+    query = query.filter(ma.address > mac_range["next_auto_assign_mac"])
+    query = query.order_by(asc(ma.address))
+
+    found_addr = query.first()
+    if not found_addr:
+        return mac_range["next_auto_assign_mac"]
+    return found_addr.address
+
+
 def mac_range_update_next_auto_assign_mac(context, mac_range):
     query = context.session.query(models.MacAddressRange)
     query = query.filter(models.MacAddressRange.id == mac_range["id"])
@@ -520,6 +543,21 @@ def mac_range_update_next_auto_assign_mac(context, mac_range):
     query = query.update(
         {"next_auto_assign_mac":
          models.MacAddressRange.next_auto_assign_mac + 1},
+        synchronize_session=False)
+
+    # Returns a count of the rows matched in the update
+    return query
+
+
+def mac_range_update_next_auto_assign_mac_by_value(context, mac_range, value):
+    query = context.session.query(models.MacAddressRange)
+    query = query.filter(models.MacAddressRange.id == mac_range["id"])
+    query = query.filter(models.MacAddressRange.next_auto_assign_mac != -1)
+
+    # For details on synchronize_session, see:
+    # http://docs.sqlalchemy.org/en/rel_0_8/orm/query.html
+    query = query.update(
+        {"next_auto_assign_mac": value},
         synchronize_session=False)
 
     # Returns a count of the rows matched in the update
@@ -547,14 +585,116 @@ def mac_address_update(context, mac, **kwargs):
     return mac
 
 
+def mac_address_allocate(context, mac):
+    mac.deallocated = False
+    context.session.add(mac)
+    return mac
+
+
+def mac_address_allocate_by_id(context, address):
+    mac_address = models.MacAddress
+    query = context.session.query(mac_address)
+    query.filter_by(address=address)
+    query = query.update({"deallocated": False})
+    return query
+
+
+def mac_address_bulk_allocate_by_id(context, addresses):
+    mac_address = models.MacAddress
+    query = context.session.query(mac_address)
+    query.filter(mac_address.address.in_(addresses))
+    query = query.update({"deallocated": False})
+    return query
+
+
 def mac_address_create(context, **mac_dict):
     mac_address = models.MacAddress()
     mac_address.update(mac_dict)
     mac_address["tenant_id"] = context.tenant_id
-    mac_address["deallocated"] = False
-    mac_address["deallocated_at"] = None
+    if "deallocated" not in mac_dict:
+        mac_address["deallocated"] = False
+        mac_address["deallocated_at"] = None
+    else:
+        mac_address["deallocated_at"] = timeutils.utcnow()
     context.session.add(mac_address)
     return mac_address
+
+
+def mac_address_create_bulk(context, start, amount, deallocated, rng_id):
+    mac_address = models.MacAddress()
+    addresses = [(start + i) for i in xrange(amount)]
+    context.session.bulk_insert_mappings(
+        mac_address,
+        [{"address": address, "deallocated": deallocated,
+          "mac_address_range_id": rng_id} for address in addresses]
+    )
+    return addresses
+
+
+def available_mac_address_count(context, mac_id):
+    ama = models.AvailableMacAddresses
+    query = context.session.query(sql_func.count(ama.id))
+    return query.filter(ama.mac_range == mac_id).scalar()
+
+
+def available_mac_address_create(context, address, mac_rng):
+    avail_mac_addr = models.AvailableMacAddresses()
+    avail_mac_addr.address = address
+    avail_mac_addr.mac_range = mac_rng.id
+    context.session.add(avail_mac_addr)
+    mac_address_allocate_by_id(context, address)
+    return avail_mac_addr
+
+
+def available_mac_address_create_bulk(context, addresses, mac_rng):
+    if not addresses:
+        return None
+    avail_mac_addr = models.AvailableMacAddresses()
+    range_id = mac_rng.id
+    context.session.bulk_insert_mappings(
+        avail_mac_addr,
+        [{"address": address, "mac_range": range_id,
+          "tenant_id": context.tenant_id} for address in
+         addresses]
+    )
+    mac_address_bulk_allocate_by_id(context, addresses)
+    return avail_mac_addr
+
+
+def available_mac_address_delete(context, available_mac):
+    context.session.delete(available_mac)
+
+
+def get_mac_from_available_list(context, mac=None):
+    ama = models.AvailableMacAddresses
+    if mac is None:
+        query = context.session.query(ama)
+        query = query.order_by(asc(ama.address))
+        return query.first()
+    query = context.session.query(ama)
+    return query.filter(ama.address == mac).first()
+
+
+def allocate_mac_from_available_list(context, available_mac):
+    mac = mac_address_find(context, address=available_mac.address, scope=ONE)
+    available_mac_address_delete(context, available_mac)
+    return mac
+
+
+def worker_sync_find(context, sync_key):
+    query = context.session.query(models.WorkerSync)
+    return query.filter(models.WorkerSync.id == sync_key)
+
+
+def worker_sync_create(context, sync_key):
+    sync = models.WorkerSync()
+    sync.id = sync_key
+    context.session.add(sync)
+    return sync
+
+
+def worker_sync_delete(context, sync):
+    context.session.delete(sync)
 
 
 INVERT_DEFAULTS = 'invert_defaults'

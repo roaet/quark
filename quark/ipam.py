@@ -67,7 +67,20 @@ quark_opts = [
     cfg.BoolOpt("ipam_select_subnet_v6_locking",
                 default=True,
                 help=_("Controls whether or not SELECT ... FOR UPDATE is used"
-                       " when retrieving v6 subnets explicitly."))
+                       " when retrieving v6 subnets explicitly.")),
+    cfg.BoolOpt("mac_reload_batch_enabled",
+                default=False,
+                help=_("Controls whether or not to use headsup method of "
+                       "mac address allocation")),
+    cfg.IntOpt("mac_reload_minimum_available", default=2,
+               help=_("The amount of mac addresses to batch reload when a "
+                      "reloaded is determined to be required")),
+    cfg.IntOpt("mac_reload_batch_size", default=5,
+               help=_("The amount of mac addresses to batch reload when a "
+                      "reloaded is determined to be required")),
+    cfg.IntOpt("mac_reload_initial_wait", default=5,
+               help=_("When detecting an initial loading of a range sleep for "
+                      "this many seconds.")),
 ]
 
 CONF.register_opts(quark_opts, "QUARK")
@@ -212,10 +225,291 @@ class QuarkIPAMLogEntry(object):
 
 
 class QuarkIpam(object):
+    def _should_reload(self, context, min_required, mac_address,
+                       use_forbidden_mac_range):
+        count = 0
+        to_reload = long(CONF.QUARK.mac_reload_batch_size)
+        rng = None
+        try:
+            fn = db_api.mac_address_range_find_allocation_counts
+            mac_range = fn(context, address=mac_address,
+                           use_forbidden_mac_range=use_forbidden_mac_range)
+
+            if not mac_range:
+                LOG.info("No MAC ranges could be found given the criteria")
+            else:
+                rng, addr_count = mac_range
+                macs_left = rng.last_address - rng.next_auto_assign_mac
+                count = db_api.available_mac_address_count(context, rng.id)
+
+                if count < min_required or mac_address is not None:
+                    if count >= min_required:
+                        to_reload = long(1)
+                    try:
+                        with context.session.begin():
+                            sync = db_api.worker_sync_create(context, rng.id)
+                            # at this point we should have enough space to
+                            # reload
+                            amt = min(to_reload, long(macs_left))
+                            full = False
+                            if amt == macs_left and mac_address is None:
+                                full = True
+                            return (sync, rng, amt, full)
+                    except db_exception.DBDuplicateEntry as e:
+                        LOG.debug("Worker found a lock")
+                        if addr_count == 0 or count == 0:
+                            """Either first load or we ran out. Wait."""
+                            time.sleep(CONF.QUARK.mac_reload_initial_wait)
+                        else:  # this is likely a chance to detect bursts
+                            pass
+        except Exception as e:
+            LOG.exception("Mac reload check had error: %s" % e)
+        return None, rng, count, False
+
+    def _reload_mac_range(self, context, sync, rng, count, requested_mac,
+                          min_required, reuse_after, port_id,
+                          use_forbidden_mac_range, set_full):
+        # NOTE(roaet): if an exception occurs outside here (somehow) the lock
+        # will not be released
+        reload_list = []
+        (s_re_req, s_make_req, s_reload, s_create, s_error, s_done) = xrange(6)
+        state = s_re_req if requested_mac is not None else s_reload
+        mac_req = requested_mac
+        create_retry = reload_retry = 0
+        try:
+            created_macs = 0
+            while created_macs < count:
+                addrs = []
+                if state == s_reload:  # optimistic branch ordering
+                    addrs, mac_req = self._reload_reallocate_bulk(
+                        context, rng, mac_req, reuse_after, port_id,
+                        count - created_macs)
+                    if not addrs:
+                        state = s_create
+                        continue
+                    if len(addrs) < count - created_macs and reload_retry > 3:
+                        state = s_create
+                elif state == s_create:
+                    addrs, mac_req = self._reload_create_new_bulk(
+                        context, rng, mac_req, count - created_macs,
+                        use_forbidden_mac_range)
+                    if not addrs:
+                        state = s_error
+                        continue
+                    if len(addrs) < count - created_macs and create_retry > 3:
+                        state = s_done
+                elif state == s_re_req:
+                    addrs, mac_req = self._reload_req_mac(
+                        context, rng, mac_req, reuse_after, port_id)
+                    if not addrs:
+                        LOG.warning("Failed to REALLOCATE requested mac")
+                        state = s_make_req
+                        continue
+                    state = s_reload
+                elif state == s_make_req:
+                    addrs, mac_req = self._create_req_mac(
+                        context, rng, mac_req, use_forbidden_mac_range)
+                    if not addrs:
+                        LOG.warning("Failed to CREATE requested mac")
+                        state = s_reload
+                        continue
+                    state = s_reload
+                elif state == s_error:
+                    """This state occurs when it was not possible to create new
+                    mac addresses from the range. Likely the range became full
+                    without us knowing.
+                    - roaet
+                    """
+                    # TODO(roaet): What to do here?
+                    break
+                elif state == s_done:
+                    """This state occurs when we weren't able to make all the
+                    macs for some reason but we ran out of ideas on how to make
+                    more. This breaks a possible infinite loop.
+                    - roaet
+                    """
+                    # TODO(roaet): What to do here?
+                    break
+                reload_list.extend(addrs)
+                created_macs += len(addrs)
+            if mac_req is not None:
+                LOG.warning("Was not able to load requested mac")
+            with context.session.begin():
+                db_api.available_mac_address_create_bulk(context, reload_list,
+                                                         rng)
+                if set_full:
+                    LOG.debug("Mac Range is now full")
+                    db_api.mac_range_update_set_full(context, rng)
+                if reload_list:
+                    LOG.debug("Loaded %d macs" % len(reload_list))
+            return created_macs
+        finally:
+            with context.session.begin():
+                db_api.worker_sync_delete(context, sync)
+
+    def _reload_reallocate_bulk(self, context, rng, req_mac, reuse_after,
+                                port_id, amount):
+        LOG.debug("Attempting to bulk reload %d macs" % (amount))
+        try:
+            with context.session.begin():
+                fx = db_api.mac_address_reallocatable_in_range_find
+                avail_macs = fx(context, rng, reuse_after)
+                return [m.address for m in avail_macs], req_mac
+        except Exception:
+            LOG.exception("Error in mac reallocate...")
+        return [], req_mac
+
+    def _reload_req_mac(self, context, rng, req_mac, reuse_after, port_id):
+        LOG.debug("Attempting to reload 1 mac")
+        for retry in xrange(CONF.QUARK.mac_address_retry_max):
+            LOG.info("Attemping to reallocate deallocated MAC (step 1 of 3),"
+                     " attempt {0} of {1}".format(
+                         retry + 1, CONF.QUARK.mac_address_retry_max))
+            try:
+                # TODO(roaet): It is likely none of this C&S is necessary
+                with context.session.begin():
+                    transaction = db_api.transaction_create(context)
+                update_kwargs = {
+                    "deallocated": False, "deallocated_at": None,
+                    "transaction_id": transaction.id
+                }
+                filter_kwargs = {"deallocated": True}
+                if req_mac is not None:
+                    filter_kwargs["address"] = req_mac
+                if reuse_after is not None:
+                    filter_kwargs["reuse_after"] = reuse_after
+                elevated = context.elevated()
+                result = db_api.mac_address_reallocate(
+                    elevated, update_kwargs, **filter_kwargs)
+                if not result:
+                    break
+
+                reallocated_mac = db_api.mac_address_reallocate_find(
+                    elevated, transaction.id)
+                if reallocated_mac:
+                    dealloc = netaddr.EUI(reallocated_mac["address"])
+                    LOG.info("Found a suitable deallocated MAC {0}".format(
+                        str(dealloc)))
+                    LOG.info("MAC assignment for port ID {0} completed "
+                             "with address {1}".format(port_id, dealloc))
+                    return [reallocated_mac['address']], None
+            except Exception:
+                LOG.exception("Error in mac reallocate...")
+                continue
+        return [], req_mac
+
+    def _reload_create_new_bulk(self, context, rng, req_mac, attempt_count,
+                                use_forbidden_mac_range):
+        for attempt in xrange(CONF.QUARK.mac_address_retry_max):
+
+            gap_start = db_api.mac_range_find_start_of_next_gap(context, rng)
+            gap_size = gap_start - rng["next_auto_assign_mac"]
+            allocate_count = attempt_count
+            handle_gap = gap_size != 0
+            if handle_gap:
+                allocate_count = min(attempt_count, gap_size)
+            try:
+                with context.session.begin():
+                    next_address = rng["next_auto_assign_mac"]
+                    if handle_gap:
+                        db_api.mac_range_update_next_auto_assign_mac_by_value(
+                            context, rng, gap_start + 1)
+                    else:
+                        db_api.mac_range_update_next_auto_assign_mac_by_value(
+                            context, rng, next_address + allocate_count)
+
+                    addrs = db_api.mac_address_create_bulk(
+                        context, next_address, allocate_count, True, rng['id'])
+                    return addrs, req_mac
+            except db_exception.DBDuplicateEntry:
+                LOG.debug("Ran into previously allocated mac. Retrying :(")
+                with context.session.begin():
+                    if next_address + 1 > rng["last_address"]:
+                        db_api.mac_range_update_set_full(context, rng)
+                    else:
+                        db_api.mac_range_update_next_auto_assign_mac(context,
+                                                                     rng)
+            except Exception:
+                LOG.exception("Error when making new macs for reload")
+                return [], req_mac
+
+    def _create_req_mac(self, context, rng, req_mac, use_forbidden_mac_range):
+        LOG.info("Reloading a MAC range {0} with new macs".format(rng["cidr"]))
+        for attempt in xrange(CONF.QUARK.mac_address_retry_max):
+            # TODO(roaet): it is likely that we do not need to check this again
+            fn = db_api.mac_address_range_find_allocation_counts
+            mac_range = fn(context, address=req_mac,
+                           use_forbidden_mac_range=use_forbidden_mac_range)
+
+            if not mac_range:
+                LOG.info("No MAC ranges could be found given the criteria")
+                return None
+
+            rng, addr_count = mac_range
+            last = rng["last_address"]
+            first = rng["first_address"]
+            if (last - first + 1) <= addr_count:
+                db_api.mac_range_update_set_full(context, rng)
+                LOG.info("MAC range {0} is full".format(rng["cidr"]))
+                return None
+            if req_mac:
+                next_address = req_mac
+            else:
+                next_address = rng["next_auto_assign_mac"]
+                if next_address + 1 > rng["last_address"]:
+                    db_api.mac_range_update_set_full(context, rng)
+                else:
+                    db_api.mac_range_update_next_auto_assign_mac(context, rng)
+                context.session.refresh(rng)
+            try:
+                mac_readable = str(netaddr.EUI(next_address))
+                LOG.info("Attempting to create new MAC {0}".format(
+                    mac_readable))
+                with context.session.begin():
+                    mac = db_api.mac_address_create(
+                        context, address=next_address, deallocated=True,
+                        mac_address_range_id=rng["id"])
+                    return [mac['address']], None
+            except db_exception.DBDuplicateEntry:
+                LOG.debug("Ran into previously allocated mac. Retrying :(")
+            except Exception:
+                LOG.exception("Error when making new macs for reload")
+                return [], req_mac
+
     @synchronized(named("allocate_mac_address"))
-    def allocate_mac_address(self, context, net_id, port_id, reuse_after,
-                             mac_address=None,
-                             use_forbidden_mac_range=False):
+    def allocate_mac_headsup(self, context, net_id, port_id, reuse_after,
+                             req_mac=None, use_forbidden_mac_range=False):
+        if req_mac:
+            req_mac = netaddr.EUI(req_mac).value
+
+        min_required = CONF.QUARK.mac_reload_minimum_available
+        (sync, rng, count, full) = self._should_reload(
+            context, min_required, req_mac, use_forbidden_mac_range)
+        if sync is not None:
+            amount = self._reload_mac_range(
+                context, sync, rng, count, req_mac, min_required,
+                reuse_after, port_id, use_forbidden_mac_range, full)
+            if amount == 0:
+                LOG.error("We not able to load any macs at all")
+            elif amount != count:
+                LOG.warning("We did not load the expected amount of macs")
+        if rng is None:
+            """ NOTE(roaet): this is bad but we can't stop here as there are
+            likely more available addresses in the list.
+            """
+            LOG.info("No MAC ranges could be found given the criteria")
+
+        with context.session.begin():
+            ama = db_api.get_mac_from_available_list(context, mac=req_mac)
+            if ama is not None:
+                return db_api.allocate_mac_from_available_list(context, ama)
+
+        raise exceptions.MacAddressGenerationFailure(net_id=net_id)
+
+    @synchronized(named("allocate_mac_address"))
+    def allocate_mac_address_old(self, context, net_id, port_id, reuse_after,
+                                 mac_address=None,
+                                 use_forbidden_mac_range=False):
         if mac_address:
             mac_address = netaddr.EUI(mac_address).value
 
@@ -334,6 +628,16 @@ class QuarkIpam(object):
                 continue
 
         raise n_exc_ext.MacAddressGenerationFailure(net_id=net_id)
+
+    @synchronized(named("allocate_mac_address"))
+    def allocate_mac_address(self, context, net_id, port_id, reuse_after,
+                             mac_address=None,
+                             use_forbidden_mac_range=False):
+        fx = self.allocate_mac_address_old
+        if CONF.QUARK.mac_reload_batch_enabled:
+            fx = self.allocate_mac_headsup
+        return fx(context, net_id, port_id, reuse_after, mac_address,
+                  use_forbidden_mac_range)
 
     @synchronized(named("reallocate_ip"))
     def attempt_to_reallocate_ip(self, context, net_id, port_id, reuse_after,

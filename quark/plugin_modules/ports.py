@@ -12,6 +12,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+import time
 
 import netaddr
 from neutron.extensions import securitygroup as sg_ext
@@ -337,8 +338,12 @@ def create_port(context, port):
                     "Couldn't rollback db port %s" % backend_port)
 
         # addresses, mac, backend_port, new_port
+        t0 = time.time()
         mac = _allocate_mac(net, port_id, mac_address,
                             use_forbidden_mac_range=use_forbidden_mac_range)
+        t1 = time.time()
+        LOG.debug("TIME" * 20)
+        LOG.debug(str(t1 - t0))
         _allocate_ips(fixed_ips, net, port_id, segment_id, mac)
         backend_port = _allocate_backend_port(mac, addresses, net, port_id)
         new_port = _allocate_db_port(port_attrs, backend_port, addresses, mac)

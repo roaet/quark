@@ -487,6 +487,16 @@ class MacAddressRange(BASEV2, models.HasId):
                            server_default='0')
 
 
+class AvailableMacAddresses(BASEV2, models.HasId):
+    __tablename__ = "quark_available_mac_addresses"
+    address = sa.Column(sa.BigInteger(),
+                        sa.ForeignKey("quark_mac_addresses.address"),
+                        nullable=False)
+    mac_range = sa.Column(sa.String(36),
+                          sa.ForeignKey("quark_mac_address_ranges.id"),
+                          nullable=False)
+
+
 class IPPolicy(BASEV2, models.HasId, models.HasTenant):
     __tablename__ = "quark_ip_policy"
     networks = orm.relationship(
@@ -587,3 +597,9 @@ class SegmentAllocationRange(BASEV2, models.HasId):
     last_id = sa.Column(sa.BigInteger(), nullable=False)
 
     do_not_use = sa.Column(sa.Boolean(), default=False, nullable=False)
+
+
+class WorkerSync(BASEV2):
+    """Used for synchronizing the workers."""
+    __tablename__ = "quark_worker_sync"
+    id = sa.Column(sa.String(36), primary_key=True)
