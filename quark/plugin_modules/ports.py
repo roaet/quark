@@ -21,6 +21,7 @@ from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_utils import uuidutils
 
+from quark import audit
 from quark.db import api as db_api
 from quark.drivers import registry
 from quark.environment import Capabilities
@@ -343,6 +344,10 @@ def create_port(context, port):
         backend_port = _allocate_backend_port(mac, addresses, net, port_id)
         new_port = _allocate_db_port(port_attrs, backend_port, addresses, mac)
 
+    
+    audit.port_audit_create(context, new_port)
+    for addr in new_port.ip_addresses:
+        audit.ip_address_audit_associate(context, addr, new_port)
     return v._make_port_dict(new_port)
 
 
@@ -490,6 +495,7 @@ def update_port(context, id, port):
     if port_db in context.session:
         context.session.expunge(port_db)
     port_db = db_api.port_find(context, id=id, scope=db_api.ONE)
+    audit.port_audit_update(context, port_db)
 
     return v._make_port_dict(port_db)
 
@@ -614,6 +620,7 @@ def delete_port(context, id):
 
     with context.session.begin():
         db_api.port_delete(context, port)
+        audit.port_audit_delete(context, port)
 
 
 def _diag_port(context, port, fields):

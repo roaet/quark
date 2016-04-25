@@ -24,6 +24,7 @@ from oslo_utils import importutils
 from oslo_utils import timeutils
 
 from quark import allocation_pool
+from quark import audit
 from quark.db import api as db_api
 from quark.db import models
 from quark import exceptions as q_exc
@@ -218,6 +219,7 @@ def create_subnet(context, subnet):
             new_subnet["routes"].append(db_api.route_create(
                 context, cidr=str(routes.DEFAULT_ROUTE), gateway=gateway_ip))
 
+    audit.subnet_audit_create(context, new_subnet)
     subnet_dict = v._make_subnet_dict(new_subnet)
     subnet_dict["gateway_ip"] = gateway_ip
 
@@ -349,6 +351,7 @@ def update_subnet(context, id, subnet):
                 # invalidate the cache
                 db_api.subnet_update_set_alloc_pool_cache(context, subnet_db)
         subnet = db_api.subnet_update(context, subnet_db, **s)
+        audit.subnet_audit_update(context, subnet)
     return v._make_subnet_dict(subnet)
 
 
@@ -458,6 +461,7 @@ def delete_subnet(context, id):
                        deleted_at=timeutils.utcnow())
 
         _delete_subnet(context, subnet)
+        audit.subnet_audit_delete(context, subnet)
 
         n_rpc.get_notifier("network").info(context, "ip_block.delete", payload)
 

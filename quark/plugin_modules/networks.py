@@ -22,6 +22,7 @@ from oslo_log import log as logging
 from oslo_utils import importutils
 from oslo_utils import uuidutils
 
+from quark import audit
 from quark.db import api as db_api
 from quark.drivers import registry
 from quark import exceptions as q_exc
@@ -146,6 +147,7 @@ def create_network(context, network):
         #        context,
         #        filters={"id": security_groups.DEFAULT_SG_UUID}):
         #    security_groups._create_default_security_group(context)
+        audit.network_audit_create(context, new_net)
     return v._make_network_dict(new_net)
 
 
@@ -170,6 +172,7 @@ def update_network(context, id, network):
         if not context.is_admin and "ipam_strategy" in net_dict:
             utils.pop_param(net_dict, "ipam_strategy")
         net = db_api.network_update(context, net, **net_dict)
+        audit.network_audit_update(context, net)
 
     return v._make_network_dict(net)
 
@@ -264,6 +267,7 @@ def delete_network(context, id):
         for subnet in net["subnets"]:
             subnets._delete_subnet(context, subnet)
         db_api.network_delete(context, net)
+        audit.network_audit_delete(context, net)
 
 
 def _diag_network(context, network, fields):

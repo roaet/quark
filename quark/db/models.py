@@ -587,3 +587,84 @@ class SegmentAllocationRange(BASEV2, models.HasId):
     last_id = sa.Column(sa.BigInteger(), nullable=False)
 
     do_not_use = sa.Column(sa.Boolean(), default=False, nullable=False)
+
+
+class AuditDetails(BASEV2):
+    """Contains detailed information for an audit log. Usually JSON."""
+    __tablename__ = "quark_audit_details"
+    id = sa.Column(sa.BigInteger(), primary_key=True, autoincrement=True)
+    contents = sa.Column(sa.Text(), nullable=False)
+    version = sa.Column(sa.String(16), nullable=False)
+    audit_id = sa.Column(sa.BigInteger(), sa.ForeignKey("quark_audits.id"))
+
+
+class Audit(BASEV2):
+    """Serves as a storage for auditable events."""
+    __tablename__ = "quark_audits"
+    id = sa.Column(sa.BigInteger(), primary_key=True, autoincrement=True)
+    resource_desc = sa.Column(sa.String(64), nullable=True)
+    resource_key = sa.Column(sa.String(36), nullable=True)
+    tenant_id = sa.Column(sa.String(16), nullable=False)
+    instance_uuid = sa.Column(sa.String(36), nullable=True)
+
+    orm.relationship("AuditDetails", backref="audit")
+
+    datacenter_id = sa.Column(
+        sa.Integer(), sa.ForeignKey('quark_audit_datacenters.id'))
+    network_id = sa.Column(
+        sa.BigInteger(), sa.ForeignKey('quark_audit_networks.id'))
+    version_id = sa.Column(
+        sa.Integer(), sa.ForeignKey('quark_audit_versions.id'))
+    operation_id = sa.Column(
+        sa.Integer(), sa.ForeignKey('quark_audit_operations.id'))
+    resource_id = sa.Column(
+        sa.Integer(), sa.ForeignKey('quark_audit_resources.id'))
+
+
+class AuditDataCenter(BASEV2):
+    """Lookup and reference to datacenter selections."""
+    __tablename__ = "quark_audit_datacenters"
+    id = sa.Column(sa.Integer(), primary_key=True, autoincrement=True)
+    name = sa.Column(sa.String(36), unique=True)
+    orm.relationship("Audit", backref="datacenter")
+
+
+class AuditNetworkType(BASEV2):
+    """Lookup and reference to audit network types."""
+    __tablename__ = "quark_audit_network_types"
+    id = sa.Column(sa.Integer(), primary_key=True, autoincrement=True)
+    type = sa.Column(sa.String(36), unique=True)
+    networks = orm.relationship("AuditNetworks", backref="network_type")
+
+
+class AuditNetworks(BASEV2):
+    __tablename__ = "quark_audit_networks"
+    id = sa.Column(sa.BigInteger(), primary_key=True, autoincrement=True)
+    network_id = sa.Column(sa.String(36), unique=True)
+    network_type_id = sa.Column(
+        sa.Integer(), sa.ForeignKey('quark_audit_network_types.id'))
+    orm.relationship("Audit", backref="network")
+
+
+class AuditVersion(BASEV2):
+    """Lookup and reference to audit versions."""
+    __tablename__ = "quark_audit_versions"
+    id = sa.Column(sa.Integer(), primary_key=True, autoincrement=True)
+    version = sa.Column(sa.String(16), unique=True)
+    orm.relationship("Audit", backref="version")
+
+
+class AuditOperation(BASEV2):
+    """Lookup and reference to available audit operations."""
+    __tablename__ = "quark_audit_operations"
+    id = sa.Column(sa.Integer(), primary_key=True, autoincrement=True)
+    operation = sa.Column(sa.String(16), unique=True)
+    orm.relationship("Audit", backref="operation")
+
+
+class AuditResource(BASEV2):
+    """Lookup and reference to available audit resources."""
+    __tablename__ = "quark_audit_resources"
+    id = sa.Column(sa.Integer(), primary_key=True, autoincrement=True)
+    resource = sa.Column(sa.String(16), unique=True)
+    orm.relationship("Audit", backref="resource")

@@ -20,6 +20,7 @@ import json
 import netaddr
 from neutron.db.sqlalchemyutils import paginate_query
 from oslo_config import cfg
+from oslo_db import exception as db_exception
 from oslo_log import log as logging
 from oslo_utils import timeutils
 from oslo_utils import uuidutils
@@ -1143,3 +1144,91 @@ def segment_allocation_range_create(context, **sa_range_dict):
 
 def segment_allocation_range_delete(context, sa_range):
     context.session.delete(sa_range)
+
+
+def _get_audit_lookup(context, model, lookup, update_dict):
+    query = context.session.query(model)
+    filters = [lookup]
+    op = query.filter(*filters).first()
+    if op is None:
+        op = model()
+        op.update(update_dict)
+        try:
+            with context.session.begin(subtransactions=True):
+                context.session.add(op)
+        except db_exception.DBDuplicateEntry:
+            op = query.filter(*filters).first()
+    return op
+
+
+def _get_audit_operation(context, operation):
+    model = models.AuditOperation
+    return _get_audit_lookup(context, model, model.operation == operation,
+                            {"operation": operation})
+
+
+def _get_audit_resource(context, resource):
+    model = models.AuditResource
+    return _get_audit_lookup(context, model, model.resource == resource,
+                            {"resource": resource})
+
+
+def _get_audit_datacenter(context, datacenter):
+    model = models.AuditDataCenter
+    return _get_audit_lookup(context, model, model.name == datacenter,
+                            {"name": datacenter})
+
+
+def _get_audit_network_type(context, network_type):
+    model = models.AuditNetworkType
+    return _get_audit_lookup(context, model, model.type == network_type,
+                            {"type": network_type})
+
+
+def _get_audit_network(context, network_id):
+    if network_id is None:
+        return None
+    model = models.AuditNetworks
+    defaults = STRATEGY.get_provider_networks()
+    net_type = 'isolated'
+    if network_id in defaults:
+        net_type = 'provider'
+    db_net_type = _get_audit_network_type(context, net_type)
+    return _get_audit_lookup(context, model, model.network_id == network_id,
+                            {"network_id": network_id, "network": db_net_type, 
+                             "network_type_id": db_net_type.id})
+
+
+def _get_audit_version(context, version):
+    model = models.AuditVersion
+    return _get_audit_lookup(context, model, model.version == version,
+                            {"version": version})
+
+
+OPERATION_UNKNOWN = "unknown"
+
+def create_audit_record(context, **kwargs):
+    resource_key = kwargs.pop('resource_id')
+    resource_desc = kwargs.pop('resource_desc')
+    tenant_id = kwargs.pop('tenant_id')
+    instance_uuid = kwargs.pop('instance_uuid', None)
+
+    network = _get_audit_network(context, kwargs.pop('network', None))
+    resource = _get_audit_resource(context, kwargs.pop('resource', 'unknown'))
+    version = _get_audit_version(context, kwargs.pop('version', None))
+    operation = _get_audit_operation(
+        context, kwargs.pop('operation', OPERATION_UNKNOWN))
+
+    audit = models.Audit()
+    update = {
+        "resource_key": resource_key,
+        "resource_desc": resource_desc,
+        "tenant_id": tenant_id,
+        "instance_uuid": instance_uuid,
+        "network_id": network.id,
+        "resource_id": resource.id,
+        "version_id": version.id,
+        "operation_id": operation.id,
+        }
+    audit.update(update)
+    context.session.add(audit)
